@@ -2,14 +2,21 @@ import 'package:flutter/foundation.dart';
 import '../models/brand.dart';
 import '../models/discount_history.dart';
 import '../services/supabase_service.dart';
+import '../services/notification_service.dart';
+import '../providers/notification_provider.dart';
 import '../utils/discount_predictor.dart';
 
 enum DiscountLoadState { idle, loading, loaded, error }
 
 class DiscountProvider extends ChangeNotifier {
-  DiscountProvider({required SupabaseService service}) : _service = service;
+  DiscountProvider({
+    required SupabaseService service
+  , required NotificationProvider notificationProvider
+  }) : _service = service
+     , _notifProvider = notificationProvider;
 
-  final SupabaseService _service;
+  final SupabaseService      _service;
+  final NotificationProvider _notifProvider;
 
   // ── State ──────────────────────────────────────────────────────────────────
 
@@ -139,6 +146,9 @@ class DiscountProvider extends ChangeNotifier {
       _invalidateHistoryCache();
       _state = DiscountLoadState.loaded;
 
+      // 알림 스케줄링: 알림 활성화된 브랜드의 upcoming 할인
+      _scheduleNotifications(historyByBrand);
+
     } catch (e, st) {
       if (generation != _loadGeneration) return;
       debugPrint('[DiscountProvider] _load failed: $e\n$st');
@@ -147,5 +157,29 @@ class DiscountProvider extends ChangeNotifier {
     }
 
     if (generation == _loadGeneration) notifyListeners();
+  }
+
+  // ── 알림 스케줄링 ──────────────────────────────────────────────────────────
+
+  void _scheduleNotifications(Map<String, List<DiscountHistory>> historyByBrand) {
+    final today = todayString();
+    final notif = NotificationService.instance;
+
+    for (final brand in _brands) {
+      if (!_notifProvider.isEnabled(brand.id)) continue;
+
+      final brandHistory = historyByBrand[brand.id] ?? [];
+      // 오늘 이후 시작하는 실제 할인만 (예측 제외)
+      final upcoming = brandHistory.where((h) {
+        final sd = '${h.startDate.year}-'
+            '${h.startDate.month.toString().padLeft(2,'0')}-'
+            '${h.startDate.day.toString().padLeft(2,'0')}';
+        return sd.compareTo(today) > 0;
+      }).toList();
+
+      if (upcoming.isNotEmpty) {
+        notif.scheduleDiscountNotifications(brand.name, upcoming);
+      }
+    }
   }
 }

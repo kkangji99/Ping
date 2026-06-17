@@ -5,7 +5,7 @@ import '../models/brand.dart';
 import '../models/discount_history.dart';
 import '../services/supabase_service.dart';
 import '../providers/favorite_provider.dart';
-
+import '../providers/notification_provider.dart';
 import '../utils/discount_predictor.dart';
 
 class BrandDetailScreen extends StatefulWidget {
@@ -39,9 +39,11 @@ class _BrandDetailScreenState extends State<BrandDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final primary    = Theme.of(context).colorScheme.primary;
-    final isFavorite = context.select<FavoriteProvider, bool>(
+    final primary      = Theme.of(context).colorScheme.primary;
+    final isFavorite   = context.select<FavoriteProvider, bool>(
         (p) => p.isFavorite(widget.brand.id));
+    final notifEnabled = context.select<NotificationProvider, bool>(
+        (p) => p.isEnabled(widget.brand.id));
 
     return Scaffold(
       appBar: AppBar(
@@ -51,7 +53,20 @@ class _BrandDetailScreenState extends State<BrandDetailScreen> {
       , foregroundColor: Colors.white
       , elevation: 0
       , actions: [
-          IconButton(
+          // 벨 아이콘: 즐겨찾기 상태일 때만 표시
+          if (isFavorite)
+            IconButton(
+              icon: Icon(
+                notifEnabled
+                    ? Icons.notifications_rounded
+                    : Icons.notifications_off_outlined
+              , color: Colors.white
+              )
+            , tooltip: notifEnabled ? '알림 끄기' : '알림 켜기'
+            , onPressed: () =>
+                  context.read<NotificationProvider>().toggle(widget.brand.id)
+            )
+        , IconButton(
             icon: Icon(
               isFavorite ? Icons.favorite_rounded : Icons.favorite_border_rounded
             , color: Colors.white
@@ -426,7 +441,7 @@ class _DiscountCard extends StatelessWidget {
           children: [
             Container(
               width: 4
-            , height: 44
+            , constraints: const BoxConstraints(minHeight: 44)
             , decoration: BoxDecoration(
                 color: color
               , borderRadius: BorderRadius.circular(4)
@@ -437,7 +452,20 @@ class _DiscountCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start
               , children: [
-                  Text(
+                  if (history.label != null) ...[
+                    Text(
+                      history.label!
+                    , style: TextStyle(
+                          fontSize: 11
+                        , fontWeight: FontWeight.w600
+                        , color: color.withOpacity(0.75)
+                        )
+                    , maxLines: 1
+                    , overflow: TextOverflow.ellipsis
+                    )
+                  , const SizedBox(height: 2)
+                  ]
+                , Text(
                     rateStr
                   , style: TextStyle(
                       fontSize: 15

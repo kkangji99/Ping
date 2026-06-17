@@ -223,7 +223,7 @@ class SupabaseService {
     if (brandIds.isEmpty) return [];
     final data = await _client
         .from('discount_history')
-        .select('id, brand_id, start_date, end_date, discount_rate, is_ai_predicted')
+        .select('id, brand_id, start_date, end_date, discount_rate, is_ai_predicted, label')
         .inFilter('brand_id', brandIds)
         .eq('is_ai_predicted', false)
         .order('start_date');
@@ -236,7 +236,7 @@ class SupabaseService {
   Future<List<DiscountHistory>> fetchDiscountsForBrand(String brandId) async {
     final data = await _client
         .from('discount_history')
-        .select('id, brand_id, start_date, end_date, discount_rate, is_ai_predicted')
+        .select('id, brand_id, start_date, end_date, discount_rate, is_ai_predicted, label')
         .eq('brand_id', brandId)
         .order('start_date', ascending: false);
     return (data as List<dynamic>)

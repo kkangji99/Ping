@@ -7,8 +7,10 @@ import '../models/discount_history.dart';
 import '../providers/discount_provider.dart';
 import '../utils/brand_search.dart';
 import '../services/supabase_service.dart';
+import '../providers/notification_provider.dart';
 import 'admin/admin_login_screen.dart';
 import 'brand_detail_screen.dart';
+import 'notification_history_screen.dart';
 
 // ── HomeScreen ───────────────────────────────────────────────────────────────
 
@@ -90,6 +92,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final unreadCount = context.select<NotificationProvider, int>(
+        (p) => p.unreadCount);
+
     return Scaffold(
       appBar: AppBar(
         // 타이틀을 GestureDetector로 감싸서 5-탭 시크릿 관리자 진입
@@ -101,6 +106,39 @@ class _HomeScreenState extends State<HomeScreen> {
       , backgroundColor: Theme.of(context).colorScheme.primary
       , foregroundColor: Colors.white
       , elevation: 0
+      , actions: [
+          Stack(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.notifications_outlined, color: Colors.white)
+              , onPressed: () => Navigator.push(
+                    context
+                  , MaterialPageRoute(
+                        builder: (_) => const NotificationHistoryScreen())
+                  )
+              )
+            , if (unreadCount > 0)
+                Positioned(
+                  right: 6, top: 6
+                , child: Container(
+                    padding: const EdgeInsets.all(3)
+                  , decoration: const BoxDecoration(
+                        color: Colors.redAccent
+                      , shape: BoxShape.circle
+                      )
+                  , child: Text(
+                      '$unreadCount'
+                    , style: const TextStyle(
+                          color: Colors.white
+                        , fontSize: 9
+                        , fontWeight: FontWeight.bold
+                        )
+                    )
+                  )
+                )
+            ]
+          )
+        ]
       )
     , body: FutureBuilder<List<CategoryWithBrands>>(
         future: _dataFuture

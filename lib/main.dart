@@ -6,8 +6,10 @@ import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'providers/favorite_provider.dart';
 import 'providers/discount_provider.dart';
+import 'providers/notification_provider.dart';
 import 'config.dart';
 import 'services/supabase_service.dart';
+import 'services/notification_service.dart';
 import 'views/home_screen.dart';
 import 'views/calendar_screen.dart';
 
@@ -21,6 +23,10 @@ Future<void> main() async {
     url: supabaseUrl
   , anonKey: supabaseAnonKey
   );
+
+  // 알림 서비스 초기화 + 권한 요청
+  await NotificationService.instance.init();
+  await NotificationService.instance.requestPermission();
 
   runApp(const PingApp());
 }
@@ -90,16 +96,34 @@ class PingApp extends StatelessWidget {
         Provider<SupabaseService>(
           create: (_) => SupabaseService()
         )
+        // NotificationProvider: SharedPreferences 로드 + NotificationService에 연결
       , ChangeNotifierProvider(
-          create: (_) => FavoriteProvider()
+          create: (_) {
+            final p = NotificationProvider();
+            p.load();
+            NotificationService.instance.setProvider(p);
+            return p;
+          }
         )
-        // DiscountProvider는 FavoriteProvider + SupabaseService 양쪽에 의존
-      , ChangeNotifierProxyProvider2<FavoriteProvider, SupabaseService, DiscountProvider>(
-          create: (ctx) => DiscountProvider(
-            service: ctx.read<SupabaseService>()
+        // FavoriteProvider: NotificationProvider에 의존
+      , ChangeNotifierProxyProvider<NotificationProvider, FavoriteProvider>(
+          create: (ctx) => FavoriteProvider(
+            notificationProvider: ctx.read<NotificationProvider>()
           )
-        , update: (_, favProvider, svcProvider, prev) =>
-              (prev ?? DiscountProvider(service: svcProvider))
+        , update: (_, notifProvider, prev) =>
+              prev ?? FavoriteProvider(notificationProvider: notifProvider)
+        )
+        // DiscountProvider: FavoriteProvider + SupabaseService + NotificationProvider에 의존
+      , ChangeNotifierProxyProvider3<FavoriteProvider, SupabaseService, NotificationProvider, DiscountProvider>(
+          create: (ctx) => DiscountProvider(
+            service:              ctx.read<SupabaseService>()
+          , notificationProvider: ctx.read<NotificationProvider>()
+          )
+        , update: (_, favProvider, svcProvider, notifProvider, prev) =>
+              (prev ?? DiscountProvider(
+                service:              svcProvider
+              , notificationProvider: notifProvider
+              ))
               ..onFavoritesChanged(favProvider.favoriteIds)
         )
       ]
