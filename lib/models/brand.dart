@@ -3,12 +3,14 @@ class Brand {
   final String name;
   final String? logoUrl;
   final bool isDiscounting;
+  final String? crawlUrl;
 
   const Brand({
     required this.id
   , required this.name
   , this.logoUrl
   , required this.isDiscounting
+  , this.crawlUrl
   });
 
   Brand copyWith({
@@ -16,11 +18,13 @@ class Brand {
   , String? name
   , String? logoUrl
   , bool? isDiscounting
+  , String? crawlUrl
   }) => Brand(
     id: id ?? this.id
   , name: name ?? this.name
   , logoUrl: logoUrl ?? this.logoUrl
   , isDiscounting: isDiscounting ?? this.isDiscounting
+  , crawlUrl: crawlUrl ?? this.crawlUrl
   );
 
   factory Brand.fromJson(Map<String, dynamic> json) => Brand(
@@ -28,6 +32,7 @@ class Brand {
   , name: json['name'] as String
   , logoUrl: json['logo_url'] as String?
   , isDiscounting: json['is_discounting'] as bool
+  , crawlUrl: json['crawl_url'] as String?
   );
 
   Map<String, dynamic> toJson() => {
@@ -35,6 +40,7 @@ class Brand {
   , 'name': name
   , 'logo_url': logoUrl
   , 'is_discounting': isDiscounting
+  , 'crawl_url': crawlUrl
   };
 
   @override

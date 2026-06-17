@@ -2,19 +2,23 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:table_calendar/table_calendar.dart';
+import '../models/brand.dart';
 import '../models/discount_history.dart';
 import '../providers/favorite_provider.dart';
 import '../providers/discount_provider.dart';
+import 'brand_detail_screen.dart';
 
 // ── CalendarEvent (내부 ViewModel) ───────────────────────────────────────────
 
 class _CalendarEvent {
+  final String brandId;
   final String brandName;
   final double discountRate;
   final bool   isAiPredicted;
 
   const _CalendarEvent({
-    required this.brandName
+    required this.brandId
+  , required this.brandName
   , required this.discountRate
   , required this.isAiPredicted
   });
@@ -35,6 +39,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
   bool _showAiPrediction = true;
   CalendarFormat _calendarFormat = CalendarFormat.month;
 
+  // ── Event Map 캐시 ────────────────────────────────────────────────────────
+  Map<DateTime, List<_CalendarEvent>>? _cachedEventMap;
+  List<DiscountHistory>? _lastHistory;
+  Map<String, String>?   _lastBrandNames;
+  bool? _lastShowAi;
+
   static final _headerFmt = DateFormat('M월 d일 (E)', 'ko_KR');
 
   static const _aiColor   = Color(0xFF7C4DFF);
@@ -42,11 +52,19 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   // ── Event Map ──────────────────────────────────────────────────────────────
 
-  Map<DateTime, List<_CalendarEvent>> _buildEventMap({
+  Map<DateTime, List<_CalendarEvent>> _getEventMap({
     required List<DiscountHistory> history
-  , required Map<String, String> brandNames
+  , required Map<String, String>  brandNames
   , required bool showAi
   }) {
+    // 입력이 동일하면 캐시 반환 (identity 비교)
+    if (_cachedEventMap != null &&
+        identical(_lastHistory, history) &&
+        identical(_lastBrandNames, brandNames) &&
+        _lastShowAi == showAi) {
+      return _cachedEventMap!;
+    }
+
     final Map<DateTime, List<_CalendarEvent>> map = {};
     for (final h in history) {
       if (h.isAiPredicted && !showAi) continue;
@@ -56,7 +74,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
       while (!cursor.isAfter(end)) {
         map.putIfAbsent(cursor, () => []).add(
           _CalendarEvent(
-            brandName: name
+            brandId:      h.brandId
+          , brandName:    name
           , discountRate: h.discountRate
           , isAiPredicted: h.isAiPredicted
           )
@@ -64,6 +83,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
         cursor = cursor.add(const Duration(days: 1));
       }
     }
+
+    _cachedEventMap = map;
+    _lastHistory    = history;
+    _lastBrandNames = brandNames;
+    _lastShowAi     = showAi;
     return map;
   }
 
@@ -159,7 +183,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final favoriteIds    = context.watch<FavoriteProvider>().favoriteIds;
     final discountProv   = context.watch<DiscountProvider>();
     final brandNames     = discountProv.brandNameMap;
-    final eventMap       = _buildEventMap(
+    final eventMap       = _getEventMap(
       history:    discountProv.allHistory
     , brandNames: brandNames
     , showAi:     _showAiPrediction
@@ -196,7 +220,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     , body: Column(
         children: [
 
-          // ── AI 예상 기간 토글 ──────────────────────────────────────────────
+          // ── 예측 기간 토글 ────────────────────────────────────────────────
           _AiToggleBar(
             value: _showAiPrediction
           , onChanged: (v) => setState(() => _showAiPrediction = v)
@@ -280,6 +304,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
             , favoriteIds: favoriteIds
             , isLoading: discountProv.isLoading
             , headerFmt: _headerFmt
+            , brandMap: { for (final b in discountProv.brands) b.id: b }
             )
           )
         ]
@@ -312,7 +337,7 @@ class _AiToggleBar extends StatelessWidget {
             , borderRadius: BorderRadius.circular(2)
             )
           )
-        , const Text('AI 예측 기간 보기', style: TextStyle(fontSize: 13))
+        , const Text('예측 기간 보기', style: TextStyle(fontSize: 13))
         , const Spacer()
         , Switch.adaptive(
             value: value
@@ -340,7 +365,7 @@ class _LegendBar extends StatelessWidget {
           _item(color: Colors.redAccent,        label: '실제 할인')
         , const SizedBox(width: 16)
         , if (showAi)
-            _item(color: const Color(0xFF7C4DFF), label: 'AI 예측')
+            _item(color: const Color(0xFF7C4DFF), label: '예측')
         ]
       )
     );
@@ -400,13 +425,15 @@ class _EventList extends StatelessWidget {
   , required this.favoriteIds
   , required this.isLoading
   , required this.headerFmt
+  , required this.brandMap
   });
 
   final List<_CalendarEvent> events;
-  final DateTime? selectedDay;
-  final Set<String> favoriteIds;
-  final bool isLoading;
-  final DateFormat headerFmt;
+  final DateTime?      selectedDay;
+  final Set<String>    favoriteIds;
+  final bool           isLoading;
+  final DateFormat     headerFmt;
+  final Map<String, Brand> brandMap;
 
   @override
   Widget build(BuildContext context) {
@@ -478,7 +505,11 @@ class _EventList extends StatelessWidget {
               padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12)
             , itemCount: events.length
             , separatorBuilder: (_, __) => const SizedBox(height: 6)
-            , itemBuilder: (context, index) => _EventCard(event: events[index])
+            , itemBuilder: (context, index) {
+                final event = events[index];
+                final brand = brandMap[event.brandId];
+                return _EventCard(event: event, brand: brand);
+              }
             )
           )
       ]
@@ -510,8 +541,9 @@ class _EventList extends StatelessWidget {
 // ── _EventCard ────────────────────────────────────────────────────────────────
 
 class _EventCard extends StatelessWidget {
-  const _EventCard({required this.event});
+  const _EventCard({required this.event, required this.brand});
   final _CalendarEvent event;
+  final Brand?         brand;
 
   static const _aiColor = Color(0xFF7C4DFF);
 
@@ -521,60 +553,78 @@ class _EventCard extends StatelessWidget {
     final color = isAi ? _aiColor : Colors.redAccent;
     final pct   = (event.discountRate * 100).toStringAsFixed(0);
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12)
-    , decoration: BoxDecoration(
-        color: color.withOpacity(0.05)
-      , borderRadius: BorderRadius.circular(12)
-      , border: Border.all(color: color.withOpacity(0.15))
-      )
-    , child: Row(
-        children: [
-          Container(
-            width: 36, height: 36
-          , decoration: BoxDecoration(
-              color: color.withOpacity(0.12)
-            , shape: BoxShape.circle
-            )
-          , child: Icon(
-                isAi ? Icons.auto_awesome_rounded : Icons.local_offer_rounded
-              , color: color
-              , size: 18
+    return InkWell(
+      onTap: brand == null ? null : () {
+        Navigator.push(
+          context
+        , MaterialPageRoute(builder: (_) => BrandDetailScreen(brand: brand!))
+        );
+      }
+    , borderRadius: BorderRadius.circular(12)
+    , child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12)
+      , decoration: BoxDecoration(
+          color: color.withOpacity(0.05)
+        , borderRadius: BorderRadius.circular(12)
+        , border: Border.all(color: color.withOpacity(0.15))
+        )
+      , child: Row(
+          children: [
+            Container(
+              width: 36, height: 36
+            , decoration: BoxDecoration(
+                color: color.withOpacity(0.12)
+              , shape: BoxShape.circle
               )
-          )
-        , const SizedBox(width: 12)
-        , Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start
+            , child: Icon(
+                  isAi ? Icons.event_note_rounded : Icons.local_offer_rounded
+                , color: color
+                , size: 18
+                )
+            )
+          , const SizedBox(width: 12)
+          , Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start
+              , children: [
+                  Text(
+                    event.brandName
+                  , style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)
+                  )
+                , const SizedBox(height: 2)
+                , Text(
+                    isAi ? '할인 예측' : '현재 할인 중'
+                  , style: TextStyle(fontSize: 11, color: color)
+                  )
+                ]
+              )
+            )
+          , Row(
+              mainAxisSize: MainAxisSize.min
             , children: [
-                Text(
-                  event.brandName
-                , style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5)
+                , decoration: BoxDecoration(
+                    color: color
+                  , borderRadius: BorderRadius.circular(8)
+                  )
+                , child: Text(
+                    '$pct% OFF'
+                  , style: const TextStyle(
+                      color: Colors.white
+                    , fontWeight: FontWeight.w800
+                    , fontSize: 12
+                    )
+                  )
                 )
-              , const SizedBox(height: 2)
-              , Text(
-                  isAi ? 'AI 예측 할인' : '현재 할인 중'
-                , style: TextStyle(fontSize: 11, color: color)
-                )
+              , if (brand != null) ...[
+                  const SizedBox(width: 6)
+                , Icon(Icons.chevron_right_rounded, size: 18, color: Colors.grey.shade400)
+                ]
               ]
             )
-          )
-        , Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5)
-          , decoration: BoxDecoration(
-              color: color
-            , borderRadius: BorderRadius.circular(8)
-            )
-          , child: Text(
-              '$pct% OFF'
-            , style: const TextStyle(
-                color: Colors.white
-              , fontWeight: FontWeight.w800
-              , fontSize: 12
-              )
-            )
-          )
-        ]
+          ]
+        )
       )
     );
   }

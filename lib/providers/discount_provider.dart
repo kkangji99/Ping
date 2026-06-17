@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import '../models/brand.dart';
 import '../models/discount_history.dart';
 import '../services/supabase_service.dart';
+import '../utils/discount_predictor.dart';
 
 enum DiscountLoadState { idle, loading, loaded, error }
 
@@ -19,14 +20,22 @@ class DiscountProvider extends ChangeNotifier {
   String? _errorMessage;
   Set<String> _loadedFavoriteIds = {};
 
-  // 경쟁 조건 방지: favorites가 빠르게 변경될 때 이전 로드 결과를 무시
+  // 경쟁 조건 방지
   int _loadGeneration = 0;
 
-  // brandNameMap 캐시: _brands 변경 시 null 로 초기화
-  Map<String, String>? _brandNameMapCache;
-
-  // allHistory 캐시: 데이터 변경 시 null 로 초기화
+  // ── 캐시 ──────────────────────────────────────────────────────────────────
+  Map<String, String>?  _brandNameMapCache;
+  Map<String, String?>? _brandUrlMapCache;
   List<DiscountHistory>? _allHistoryCache;
+
+  void _invalidateBrandCaches() {
+    _brandNameMapCache = null;
+    _brandUrlMapCache  = null;
+  }
+
+  void _invalidateHistoryCache() {
+    _allHistoryCache = null;
+  }
 
   // ── Getters ────────────────────────────────────────────────────────────────
 
@@ -35,7 +44,7 @@ class DiscountProvider extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   bool get isLoading => _state == DiscountLoadState.loading;
 
-  /// 실제 할인 + AI 예측 통합 목록 (캐시됨)
+  /// 실제 할인 + 예측 통합 목록 (캐시됨)
   List<DiscountHistory> get allHistory =>
       _allHistoryCache ??= [..._realHistory, ..._aiPredictions];
 
@@ -43,9 +52,37 @@ class DiscountProvider extends ChangeNotifier {
   Map<String, String> get brandNameMap =>
       _brandNameMapCache ??= {for (final b in _brands) b.id: b.name};
 
+  /// brandId → crawlUrl 룩업 맵 (캐시됨)
+  Map<String, String?> get brandUrlMap =>
+      _brandUrlMapCache ??= {for (final b in _brands) b.id: b.crawlUrl};
+
+  /// 특정 브랜드가 실제 이력 기준으로 지금 할인 중인지 여부.
+  /// 즐겨찾기 브랜드(이력 로드됨) → bool 반환.
+  /// 비즐겨찾기(이력 미로드) → null (호출자가 brand.isDiscounting 폴백).
+  bool? isActivelyDiscounting(String brandId) {
+    if (!_loadedFavoriteIds.contains(brandId)) return null;
+    final today = todayString();
+    String ds(DateTime d) =>
+        '${d.year}-${d.month.toString().padLeft(2,'0')}-${d.day.toString().padLeft(2,'0')}';
+    return _realHistory.any((h) =>
+        h.brandId == brandId &&
+        ds(h.startDate).compareTo(today) <= 0 &&
+        ds(h.endDate).compareTo(today) >= 0
+    );
+  }
+
+  /// 특정 브랜드의 가장 이른 예측 할인 (홈 배지용)
+  DiscountHistory? firstPredictionFor(String brandId) {
+    DiscountHistory? result;
+    for (final h in _aiPredictions) {
+      if (h.brandId != brandId) continue;
+      if (result == null || h.startDate.isBefore(result.startDate)) result = h;
+    }
+    return result;
+  }
+
   // ── Public API ─────────────────────────────────────────────────────────────
 
-  /// FavoriteProvider 변경 시 ProxyProvider가 호출
   void onFavoritesChanged(Set<String> favoriteIds) {
     if (setEquals(_loadedFavoriteIds, favoriteIds)) return;
     _loadedFavoriteIds = Set.from(favoriteIds);
@@ -55,7 +92,6 @@ class DiscountProvider extends ChangeNotifier {
   // ── Private ────────────────────────────────────────────────────────────────
 
   Future<void> _load(Set<String> favoriteIds) async {
-    // 현재 세대 번호를 캡처 — 비동기 완료 후 세대가 바뀌면 결과를 버림
     final generation = ++_loadGeneration;
 
     _state = DiscountLoadState.loading;
@@ -63,39 +99,44 @@ class DiscountProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // 브랜드 목록이 비어있으면 먼저 로드
       if (_brands.isEmpty) {
         final fetchedBrands = await _service.fetchBrands();
-        if (generation != _loadGeneration) return; // stale
+        if (generation != _loadGeneration) return;
         _brands = fetchedBrands;
-        _brandNameMapCache = null; // 캐시 무효화
+        _invalidateBrandCaches();
       }
 
       if (favoriteIds.isEmpty) {
         if (generation != _loadGeneration) return;
         _realHistory = [];
         _aiPredictions = [];
-        _allHistoryCache = null;
+        _invalidateHistoryCache();
         _state = DiscountLoadState.loaded;
         notifyListeners();
         return;
       }
 
-      // 실제 할인 이력 조회
       final realHistory = await _service.fetchRealHistoryForBrands(
         favoriteIds.toList()
       );
-      if (generation != _loadGeneration) return; // stale
+      if (generation != _loadGeneration) return;
 
-      // AI 예측: 브랜드별 병렬 호출
-      final aiResults = await Future.wait(
-        favoriteIds.map((id) => _service.predictNextDiscount(id))
-      );
-      if (generation != _loadGeneration) return; // stale
+      // 브랜드별 이력 그룹화 → 로컬 예측 생성
+      final historyByBrand = <String, List<DiscountHistory>>{};
+      for (final h in realHistory) {
+        historyByBrand.putIfAbsent(h.brandId, () => []).add(h);
+      }
+      final today = todayString();
+      final predictions = <DiscountHistory>[];
+      for (final brandId in favoriteIds) {
+        predictions.addAll(
+          generateLocalPredictions(brandId, historyByBrand[brandId] ?? [], today)
+        );
+      }
 
-      _realHistory    = realHistory;
-      _aiPredictions  = aiResults.whereType<DiscountHistory>().toList();
-      _allHistoryCache = null; // 캐시 무효화
+      _realHistory   = realHistory;
+      _aiPredictions = predictions;
+      _invalidateHistoryCache();
       _state = DiscountLoadState.loaded;
 
     } catch (e, st) {

@@ -3,9 +3,12 @@ import 'package:provider/provider.dart';
 import '../models/brand.dart';
 import '../models/category_with_brands.dart';
 import '../providers/favorite_provider.dart';
+import '../models/discount_history.dart';
 import '../providers/discount_provider.dart';
+import '../utils/brand_search.dart';
 import '../services/supabase_service.dart';
 import 'admin/admin_login_screen.dart';
+import 'brand_detail_screen.dart';
 
 // ── HomeScreen ───────────────────────────────────────────────────────────────
 
@@ -80,8 +83,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     if (_searchQuery.isNotEmpty) {
-      final q = _searchQuery.toLowerCase();
-      return all.where((e) => e.brand.name.toLowerCase().contains(q)).toList();
+      return all.where((e) => matchesBrandSearch(e.brand.name, _searchQuery)).toList();
     }
     return all;
   }
@@ -382,9 +384,12 @@ class _BrandTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isFavorite = context.watch<FavoriteProvider>().isFavorite(brand.id);
+    final isFavorite = context.select<FavoriteProvider, bool>(
+        (p) => p.isFavorite(brand.id));
+    // 즐겨찾기 브랜드는 실제 이력 기준, 비즐겨찾기는 DB 플래그 폴백
+    final isOnSale   = context.select<DiscountProvider, bool?>(
+        (p) => p.isActivelyDiscounting(brand.id)) ?? brand.isDiscounting;
     final primary    = Theme.of(context).colorScheme.primary;
-    final isOnSale   = brand.isDiscounting;
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200)
@@ -393,6 +398,12 @@ class _BrandTile extends StatelessWidget {
           : Colors.transparent
     , child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4)
+      , onTap: () => Navigator.push(
+            context
+          , MaterialPageRoute(
+              builder: (_) => BrandDetailScreen(brand: brand)
+            )
+          )
       , leading: _BrandLogo(name: brand.name, logoUrl: brand.logoUrl)
       , title: Text(
             brand.name
@@ -463,16 +474,13 @@ class _AiPredictionBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dp = context.watch<DiscountProvider>();
-    final prediction = dp.allHistory
-        .where((h) => h.brandId == brandId && h.isAiPredicted)
-        .fold<dynamic>(null, (prev, h) =>
-            prev == null || h.startDate.isBefore(prev.startDate) ? h : prev);
+    final prediction = context.select<DiscountProvider, DiscountHistory?>(
+        (p) => p.firstPredictionFor(brandId));
 
     if (prediction == null) return const SizedBox.shrink();
 
     final month = prediction.startDate.month;
-    return _DiscountBadge(label: 'AI $month월', color: primary);
+    return _DiscountBadge(label: '$month월 예측', color: primary);
   }
 }
 

@@ -30,6 +30,8 @@ class PingApp extends StatelessWidget {
 
   // ── 테마 ──────────────────────────────────────────────────────────────────────
 
+  static final ThemeData _theme = _buildTheme();
+
   static ThemeData _buildTheme() {
     // Noto Sans KR: 한국어에 최적화된 깔끔한 산세리프
     final base = ThemeData(
@@ -104,7 +106,7 @@ class PingApp extends StatelessWidget {
     , child: MaterialApp(
         title: 'Ping'
       , debugShowCheckedModeBanner: false
-      , theme: _buildTheme()
+      , theme: _theme
       , localizationsDelegates: const [
           GlobalMaterialLocalizations.delegate
         , GlobalWidgetsLocalizations.delegate

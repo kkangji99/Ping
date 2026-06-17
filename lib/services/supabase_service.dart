@@ -98,7 +98,7 @@ class SupabaseService {
   Future<List<Brand>> fetchBrands() async {
     final data = await _client
         .from('brands')
-        .select('id, name, logo_url, is_discounting')
+        .select('id, name, logo_url, is_discounting, crawl_url')
         .order('name');
     return (data as List<dynamic>)
         .map((e) => Brand.fromJson(e as Map<String, dynamic>))
@@ -227,6 +227,18 @@ class SupabaseService {
         .inFilter('brand_id', brandIds)
         .eq('is_ai_predicted', false)
         .order('start_date');
+    return (data as List<dynamic>)
+        .map((e) => DiscountHistory.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// 특정 브랜드의 모든 할인 기간 (실제 + 예측) 조회
+  Future<List<DiscountHistory>> fetchDiscountsForBrand(String brandId) async {
+    final data = await _client
+        .from('discount_history')
+        .select('id, brand_id, start_date, end_date, discount_rate, is_ai_predicted')
+        .eq('brand_id', brandId)
+        .order('start_date', ascending: false);
     return (data as List<dynamic>)
         .map((e) => DiscountHistory.fromJson(e as Map<String, dynamic>))
         .toList();
